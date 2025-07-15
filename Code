@@ -1,0 +1,208 @@
+# ✅ UNIVERSAL RESUME ANALYZER – Final with Experience Section Fix
+!pip install PyMuPDF fpdf scikit-learn --quiet
+
+import fitz, re, pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from IPython.display import display, HTML
+from fpdf import FPDF
+from google.colab import files
+
+# === Upload Resume
+print("📄 Upload your resume (PDF only)")
+uploaded = files.upload()
+filename = list(uploaded.keys())[0]
+doc = fitz.open(filename)
+resume_text = "".join([page.get_text() for page in doc])
+lower_text = resume_text.lower()
+
+def clean_text(text):
+    return text.encode('latin-1', 'ignore').decode('latin-1')
+
+# === Extract Candidate Name from Top 5 Large Font Lines
+def extract_candidate_name(doc):
+    page = doc[0]
+    candidates = []
+    for block in page.get_text("dict")["blocks"]:
+        if "lines" in block:
+            for line in block["lines"]:
+                text = " ".join(span["text"] for span in line["spans"]).strip()
+                size = max(span["size"] for span in line["spans"]) if line["spans"] else 0
+                top_y = line["bbox"][1]
+                if text and len(text.split()) <= 4 and not any(char.isdigit() for char in text):
+                    if not re.search(r"resume|profile|summary|technologies", text.lower()):
+                        candidates.append((text, size, top_y))
+    top_5 = sorted(candidates, key=lambda x: x[2])[:5]
+    return "_".join(max(top_5, key=lambda x: x[1])[0].split()) if top_5 else "Candidate"
+
+candidate_name = extract_candidate_name(doc)
+
+# === Extract Education (College + Degree Only)
+def extract_education(text):
+    lines = text.splitlines()
+    edu_lines = []
+    for i, line in enumerate(lines):
+        if re.search(r"(university|college|institute|polytechnic)", line, re.IGNORECASE):
+            edu_lines.append(line.strip())
+            for j in range(i+1, min(i+4, len(lines))):
+                if re.search(r"(b\\.?e|btech|mtech|mba|bsc|msc|bachelor|master|phd|b\\.ed|m\\.ed)", lines[j], re.IGNORECASE):
+                    edu_lines.append(lines[j].strip())
+    return "\n".join(edu_lines) if edu_lines else "Not Found"
+
+# === FIXED: Extract Only Real Experience Entries With Date Patterns
+def extract_experience(text):
+    match = re.search(r"(experience|work experience|professional experience)", text, re.IGNORECASE)
+    if match:
+        sub = text[match.start():]
+        for stop in ["education", "certification", "skills", "projects", "summary"]:
+            end = re.search(rf"\n{stop}", sub, re.IGNORECASE)
+            if end:
+                sub = sub[:end.start()]
+                break
+        lines = sub.splitlines()
+        experience_lines = []
+        for line in lines:
+            if re.search(r"\b(20[0-9]{2}|present|[–-])\b", line.lower()):
+                if len(line.strip()) > 5:
+                    experience_lines.append(line.strip())
+        return "\n".join(experience_lines[:10]) if experience_lines else "Not Found"
+    return "Not Found"
+
+# === Extract Skills From Known Global List
+def extract_skills(text):
+    keywords = [
+        "python", "sql", "power bi", "excel", "tableau", "machine learning", "data analysis",
+        "html", "css", "javascript", "flask", "django", "git",
+        "aws", "azure", "gcp", "docker", "devops",
+        "recruitment", "payroll", "onboarding", "employee engagement",
+        "contract", "compliance", "litigation", "legal",
+        "clinical", "diagnosis", "pharmacology", "surgery", "hospital",
+        "teaching", "curriculum", "pedagogy", "lesson planning",
+        "seo", "branding", "analytics", "content marketing",
+        "copywriting", "editing", "storytelling", "grammar"
+    ]
+    return [s for s in keywords if s in text.lower()]
+
+found_skills = extract_skills(resume_text)
+
+# === Matching Job Roles
+job_roles = {
+    "Data Analyst": "python sql tableau excel statistics",
+    "ML Engineer": "python machine learning deep learning keras pandas numpy",
+    "Web Developer": "html css javascript flask django git",
+    "Cloud Engineer": "aws azure gcp docker kubernetes devops",
+    "HR Executive": "recruitment onboarding payroll employee engagement",
+    "Legal Associate": "law legal litigation contract compliance",
+    "Doctor / Medical Officer": "clinical diagnosis surgery hospital patient pharmacology",
+    "Educator": "teaching curriculum planning pedagogy lesson",
+    "Marketing Analyst": "seo branding google analytics campaign content",
+    "Content Writer": "writing copywriting storytelling grammar editing",
+    "Business Analyst": "excel communication analysis documentation strategy"
+}
+
+def get_score(resume_skills, jd_text):
+    if not resume_skills: return 0
+    vectorizer = TfidfVectorizer()
+    vectors = vectorizer.fit_transform([" ".join(resume_skills), jd_text])
+    return round(cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 100, 2)
+
+score_table = sorted([(role, get_score(found_skills, jd)) for role, jd in job_roles.items()], key=lambda x: x[1], reverse=True)
+top_roles = score_table[:5]
+best_role = top_roles[0][0]
+
+# === Learning Suggestions by Skills
+course_catalog = {
+    "python": "Learn Python – Coursera",
+    "sql": "SQL – Khan Academy",
+    "power bi": "Power BI – Microsoft Learn",
+    "machine learning": "ML – Andrew Ng",
+    "contract": "Contract Law – HarvardX",
+    "clinical": "Clinical Skills – NPTEL",
+    "curriculum": "Curriculum Design – NPTEL",
+    "aws": "AWS Practitioner – AWS Training",
+    "seo": "SEO – Google Garage",
+    "copywriting": "Copywriting – HubSpot"
+}
+missing_skills = [s for s in job_roles[best_role].split() if s not in found_skills]
+suggested_courses = [course_catalog[s] for s in missing_skills if s in course_catalog]
+
+# === Career Tips
+tips_by_role = {
+    "Legal Associate": [
+        "Write legal blogs on recent judgments.",
+        "Intern at law firms with specific focus areas.",
+        "Join online discussions about IPC & CPC."
+    ],
+    "Doctor / Medical Officer": [
+        "Practice with medical documentation.",
+        "Attend virtual case simulations.",
+        "Take WHO open courses."
+    ],
+    "Educator": [
+        "Learn Bloom’s Taxonomy & NEP guidelines.",
+        "Build interactive lesson plans.",
+        "Attend teacher development webinars."
+    ]
+}
+default_tips = [
+    "Work on a project in your target role.",
+    "Update resume with measurable outcomes.",
+    "Practice interviews or write blogs.",
+    "Join forums & LinkedIn groups.",
+    "Build a portfolio or GitHub if applicable."
+]
+career_tips = tips_by_role.get(best_role, default_tips)
+
+# === PDF Report
+pdf_name = f"Resume_Report_{candidate_name}.pdf"
+report = FPDF()
+report.add_page()
+report.set_font("Arial", "B", 16)
+report.cell(0, 10, clean_text("Resume Analysis Report"), ln=True)
+
+report.set_font("Arial", "", 12)
+report.cell(0, 10, clean_text(f"Candidate Name: {candidate_name.replace('_',' ')}"), ln=True)
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Education:"), ln=True)
+report.set_font("Arial", "", 12)
+report.multi_cell(0, 8, clean_text(extract_education(resume_text)))
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Work Experience:"), ln=True)
+report.set_font("Arial", "", 12)
+report.multi_cell(0, 8, clean_text(extract_experience(resume_text)))
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Detected Skills:"), ln=True)
+report.set_font("Arial", "", 12)
+report.multi_cell(0, 8, clean_text(", ".join(found_skills) or "Not found"))
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Top Matching Roles:"), ln=True)
+report.set_font("Arial", "", 12)
+for role, score in top_roles:
+    report.cell(0, 10, clean_text(f"- {role}: {score}%"), ln=True)
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Suggested Learning Roadmap:"), ln=True)
+report.set_font("Arial", "", 12)
+if suggested_courses:
+    for course in suggested_courses:
+        report.multi_cell(0, 8, clean_text(f"- {course}"))
+else:
+    report.multi_cell(0, 8, "No immediate gaps found.")
+
+report.set_font("Arial", "B", 12)
+report.cell(0, 10, clean_text("Next Steps to Upgrade:"), ln=True)
+report.set_font("Arial", "", 12)
+for tip in career_tips:
+    report.multi_cell(0, 8, clean_text(f"- {tip}"))
+
+report.output(pdf_name)
+files.download(pdf_name)
+
+# === Summary Table
+df = pd.DataFrame(top_roles, columns=["Suggested Role", "Career Readiness Score (%)"])
+display(HTML(f"<h3>✅ Analysis Complete for <b>{candidate_name.replace('_',' ')}</b></h3>"))
+display(df)
